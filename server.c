@@ -43,44 +43,19 @@ bool isRunning = true;
 
 int TCPListener(unsigned short port); //tworzenie nasłuchującego gniazda TCP
 void* clientService(void *connectionPtr); //funkcja obsługi klienta
+void* listenClient(); //funkcja nasłuchująca połączeń
 
 int main(int argc, char* argv[])
 {
-	//gniazdo listenera
-	int listenerSocket;
-	
-	//struktura adresowa gniazda obsługi klienta i jego wielkość
-	struct sockaddr_in clientAddr;
-	unsigned int clientLength;
-	
-	//gniazdo dla klienta
-	int *client;
-	
 	//identyfikator utworzonego watku
 	pthread_t threadId = 0;
 	
-	//utworzenie gniazda listenera
-	if ((listenerSocket = TCPListener(SERVER_PORT)) < 0)
-	{
-		fprintf(stderr, "%s\n", strerror(errno));
-		exit(EXIT_FAILURE);
-	}
-	printf("Utworzono gniazdo nasluchujace...\n");
-	printf("Zaczynam nasluchiwac...\n");
+	pthread_create(&threadId, 0, &listenClient, NULL);
 	
-	//pętla nieskończona z nasłuchiwaniem i dołączaniem klientów
-	while (1)
+	while(1)
 	{
-		client = (int*)malloc(sizeof(int));
-		clientLength = sizeof(clientAddr);
-		if ((*client = accept(listenerSocket, (struct sockaddr *)&clientAddr, &clientLength)) < 0)
-			fprintf(stderr, "%s\n", strerror(errno));
-		printf("Przetwarzam klienta %s...\n", inet_ntoa(clientAddr.sin_addr));
-		pthread_create(&threadId, 0, &clientService, (void*)client);
-		pthread_detach(threadId);
+		sleep(1);
 	}
-	//zamknięcie gniazda nasłuchującego
-	close(listenerSocket);
 	
 	return 0;
 }
@@ -143,4 +118,43 @@ void* clientService(void* connectionPtr)
 	close(*connection);
 	free(connection);
 	return 0;
+}
+void* listenClient()
+{
+	//identyfikator utworzonego watku
+	pthread_t threadId = 0;
+	
+	//struktura adresowa gniazda obsługi klienta i jego wielkość
+	struct sockaddr_in clientAddr;
+	unsigned int clientLength;
+	
+	//gniazdo dla klienta
+	int *client;
+	
+	//gniazdo listenera
+	int listenerSocket;
+	
+	//utworzenie gniazda listenera
+	if ((listenerSocket = TCPListener(SERVER_PORT)) < 0)
+	{
+		fprintf(stderr, "%s\n", strerror(errno));
+		exit(EXIT_FAILURE);
+	}
+	
+	printf("Utworzono gniazdo nasluchujace...\n");
+	printf("Zaczynam nasluchiwac...\n");
+	
+	//pętla nieskończona z nasłuchiwaniem i dołączaniem klientów
+	while (1)
+	{
+		client = (int*)malloc(sizeof(int));
+		clientLength = sizeof(clientAddr);
+		if ((*client = accept(listenerSocket, (struct sockaddr *)&clientAddr, &clientLength)) < 0)
+			fprintf(stderr, "%s\n", strerror(errno));
+		printf("Przetwarzam klienta %s...\n", inet_ntoa(clientAddr.sin_addr));
+		pthread_create(&threadId, 0, &clientService, (void*)client);
+		pthread_detach(threadId);
+	}
+	//zamknięcie gniazda nasłuchującego
+	close(listenerSocket);
 }

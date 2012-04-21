@@ -35,26 +35,119 @@
 #define SERVER_PORT		16300
 #define QUEUE_LEN		100
 
-bool isRunning = true;
+//ustawienie zmiennej informującej czy serwer jest włączony
+int isRunning = 0;
+
+//bufor przechowujący to co wpisano w linii poleceń serwera
+char line[BUFSIZ];
+
+//blokowanie zmiennej globalnej
+pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
 
 //int TCPSocket(unsigned short port);
 
-/* ----- DEFINICJE FUNKCJI I METOD ----- */
+/* ------------ DEFINICJE FUNKCJI I METOD ------------ */
 
 int TCPListener(unsigned short port); //tworzenie nasłuchującego gniazda TCP
 void* clientService(void *connectionPtr); //funkcja obsługi klienta
 void* listenClient(); //funkcja nasłuchująca połączeń
 
+void showHelp(); //wyświetlanie pomocy
+void status(); //informacja o statusie serwera
+
+/* --------------- DEFINICJE STRUKTUR ---------------- */
+
+typedef struct
+{
+	char address[50];
+	int tableIndex;
+} client;
+
+/* --------------------------------------------------- */
+
 int main(int argc, char* argv[])
 {
-	//identyfikator utworzonego watku
-	pthread_t threadId = 0;
-	
-	pthread_create(&threadId, 0, &listenClient, NULL);
+	//identyfikator utworzonego watku listenera
+	pthread_t listenerThId = 0;
 	
 	while(1)
 	{
-		sleep(1);
+		//wyczyszczenie bufora linii
+		memset(line, 0, BUFSIZ * sizeof(char));
+		
+		printf("Server > ");
+		//jeżeli nic nie wpisano to po prostu przejdź do nowej linii
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            putchar('\n');
+            exit(0);
+        }
+		
+		//usunięcie znaku nowej linii z line
+		line[strlen(line)-1] = 0;
+		
+		//jakaś masakra, że switch łyka tylko porównywanie integerów ;/
+		
+		if (strcmp(line, "help") == 0)
+		{
+			showHelp();
+		}
+		else if (strcmp(line, "start") == 0)
+		{
+			//jeżeli serwer wyłączony
+			if (!isRunning)
+			{
+				//to ustaw zmienną informującą czy serwer jest włączony
+				//pthread_mutex_lock(&lock);
+				isRunning = 1;
+				//pthread_mutex_unlock(&lock);
+				//uruchomienie wątku nasłuchującego
+				pthread_create(&listenerThId, 0, &listenClient, NULL);
+				//ustawienie zwalniania zasobów dla wątku
+				pthread_detach(listenerThId);
+				
+				printf("Rozpoczeto nasluchiwanie...\n");
+			}
+			else
+			{
+				printf("Serwer jest juz aktywny.\n");
+			}
+		}
+		else if (strcmp(line, "stop") == 0)
+		{
+			//jeżeli serwer włączony
+			if (isRunning)
+			{
+				//to ustaw zmienną informującą czy serwer jest wyłączony
+				//pthread_mutex_lock(&lock);
+				isRunning = 0;
+				//pthread_mutex_unlock(&lock);
+				//anuluj wątek nasłuchujący
+				pthread_cancel(listenerThId);
+				//i włącz go do wątku głównego
+				pthread_join(listenerThId, NULL);
+				
+				printf("Wstrzymano nasluchiwanie.\n");
+			}
+			else
+			{
+				printf("Serwer jest juz nieaktywny.\n");
+			}
+		}
+		else if (strcmp(line, "status") == 0)
+		{
+			status();
+		}
+		else if (strcmp(line, "exit") == 0)
+		{
+			isRunning = 0;
+			pthread_cancel(listenerThId);
+			pthread_join(listenerThId, NULL);
+			return 0;
+		}
+		else
+		{
+			printf("Nieznana komenda. Wpisz 'help' aby wyswietlic dostepne komendy.\n");
+		}
 	}
 	
 	return 0;
@@ -79,7 +172,7 @@ int TCPListener(unsigned short port)
 	
 	listenSocketAddr.sin_family = AF_INET;
 	listenSocketAddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	listenSocketAddr.sin_port = htons(port);
+	listenSocketAddr.sin_port = htons((u_short)port);
 	
 	//przypisanie adresu lokalnego do gniazda
 	if (bind(listenSocket, (struct sockaddr *) &listenSocketAddr, sizeof(listenSocketAddr)) < 0)
@@ -108,13 +201,13 @@ void* clientService(void* connectionPtr)
 	//wyczyszczenie struktury - wypełnienie zerami
 	memset(&clientAddr, 0, sizeof(clientAddr));
 	
-	printf("Deskryptor: %d\n", *connection);
+	//printf("Deskryptor: %d\n", *connection);
 	
 	if ((getpeername(*connection, (struct sockaddr *) &clientAddr, &clientLength)) < 0)
 	{
 		perror("getpeername()");
 	}
-	printf("Klient: %s\n", inet_ntoa(clientAddr.sin_addr));
+	//printf("Klient: %s\n", inet_ntoa(clientAddr.sin_addr));
 	close(*connection);
 	free(connection);
 	return 0;
@@ -129,7 +222,7 @@ void* listenClient()
 	unsigned int clientLength;
 	
 	//gniazdo dla klienta
-	int *client;
+	int *clientSock;
 	
 	//gniazdo listenera
 	int listenerSocket;
@@ -141,20 +234,43 @@ void* listenClient()
 		exit(EXIT_FAILURE);
 	}
 	
-	printf("Utworzono gniazdo nasluchujace...\n");
-	printf("Zaczynam nasluchiwac...\n");
+	//printf("Utworzono gniazdo nasluchujace...\n");
+	//printf("Zaczynam nasluchiwac...\n");
 	
 	//pętla nieskończona z nasłuchiwaniem i dołączaniem klientów
-	while (1)
+	while (isRunning)
 	{
-		client = (int*)malloc(sizeof(int));
+		clientSock = (int*)malloc(sizeof(int));
 		clientLength = sizeof(clientAddr);
-		if ((*client = accept(listenerSocket, (struct sockaddr *)&clientAddr, &clientLength)) < 0)
+		if ((*clientSock = accept(listenerSocket, (struct sockaddr *)&clientAddr, &clientLength)) < 0)
 			fprintf(stderr, "%s\n", strerror(errno));
 		printf("Przetwarzam klienta %s...\n", inet_ntoa(clientAddr.sin_addr));
-		pthread_create(&threadId, 0, &clientService, (void*)client);
+		pthread_create(&threadId, 0, &clientService, (void*)clientSock);
 		pthread_detach(threadId);
 	}
 	//zamknięcie gniazda nasłuchującego
 	close(listenerSocket);
+	printf("Doszlo do konca\n");
+	
+	return NULL;
+}
+void showHelp()
+{
+	printf("Sterowanie serwerem: \n\n");
+	printf("exit - wyjscie z programu\n");
+	printf("start - rozpoczoczecie nasluchiwania polaczen klientow\n");
+	printf("stop - wstrzymanie nasluchiwania polaczen klientow\n");
+	
+	printf("\nInformacje o serwerze: \n\n");
+	printf("list - wyswietlenie listy klientow\n");
+	printf("status - informacja na temat dzialania serwera\n");
+	
+	printf("\n");
+}
+void status()
+{
+	if (isRunning)
+		printf("Serwer jest aktywny i nasluchuje polaczen.\n");
+	else
+		printf("Serwer jest nieaktywny i nie nasluchuje polaczen.\n");
 }
